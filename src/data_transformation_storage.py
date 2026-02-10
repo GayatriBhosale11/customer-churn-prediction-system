@@ -31,48 +31,8 @@ class DataTransformationStorage:
         self.setup_database()
 
     def setup_database(self):
-        """Create tables and indexes for features, metadata, and training sets."""
+        """Create tables for metadata and training set tracking."""
         cursor = self.conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS customer_features (
-                customer_id TEXT PRIMARY KEY,
-                tenure INTEGER,
-                MonthlyCharges REAL,
-                TotalCharges REAL,
-                tenure_group INTEGER,
-                charges_per_tenure REAL,
-                total_to_monthly_ratio REAL,
-                avg_monthly_charges REAL,
-                gender_encoded INTEGER,
-                SeniorCitizen INTEGER,
-                Partner_encoded INTEGER,
-                Dependents_encoded INTEGER,
-                PhoneService_encoded INTEGER,
-                MultipleLines_encoded INTEGER,
-                InternetService_encoded INTEGER,
-                OnlineSecurity_encoded INTEGER,
-                OnlineBackup_encoded INTEGER,
-                DeviceProtection_encoded INTEGER,
-                TechSupport_encoded INTEGER,
-                StreamingTV_encoded INTEGER,
-                StreamingMovies_encoded INTEGER,
-                Contract_encoded INTEGER,
-                PaperlessBilling_encoded INTEGER,
-                PaymentMethod_encoded INTEGER,
-                Churn INTEGER,
-                total_services INTEGER,
-                service_density REAL,
-                customer_value_segment INTEGER,
-                tenure_stability INTEGER,
-                high_risk_payment INTEGER,
-                tenure_monthly_interaction REAL,
-                tenure_total_interaction REAL,
-                services_charges_interaction REAL,
-                contract_payment_interaction INTEGER,
-                created_timestamp TEXT,
-                updated_timestamp TEXT
-            )
-        """)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS feature_metadata (
                 feature_name TEXT PRIMARY KEY,
@@ -93,19 +53,46 @@ class DataTransformationStorage:
                 data_quality_score REAL
             )
         """)
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_customer_features_tenure ON customer_features(tenure)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_customer_features_churn ON customer_features(Churn)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_customer_features_charges ON customer_features(MonthlyCharges, TotalCharges)")
         self.conn.commit()
         logger.info("SQLite database initialized")
+
+    def _find_prefixed_columns(self, df: pd.DataFrame, prefix: str) -> list[str]:
+        """Return all columns that start with a given one-hot prefix."""
+        return [column for column in df.columns if column.startswith(f"{prefix}_")]
+
+    def _refresh_indexes(self, df: pd.DataFrame, table_name: str) -> None:
+        """Create lightweight indexes for common query columns when available."""
+        cursor = self.conn.cursor()
+        indexable_columns = {
+            "tenure": f"idx_{table_name}_tenure",
+            "Churn": f"idx_{table_name}_churn",
+            "MonthlyCharges": f"idx_{table_name}_monthly_charges",
+        }
+        for column, index_name in indexable_columns.items():
+            if column in df.columns:
+                cursor.execute(
+                    f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name}({column})"
+                )
+        self.conn.commit()
 
     def create_aggregated_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """Generate aggregated features for model performance."""
         df_agg = df.copy()
-        service_columns = [col for col in df.columns if 'service' in col.lower() or 
-                         col in ['PhoneService', 'MultipleLines', 'InternetService',
-                                 'OnlineSecurity', 'OnlineBackup', 'DeviceProtection', 
-                                 'TechSupport', 'StreamingTV', 'StreamingMovies']]
+        service_prefixes = [
+            "PhoneService",
+            "MultipleLines",
+            "InternetService",
+            "OnlineSecurity",
+            "OnlineBackup",
+            "DeviceProtection",
+            "TechSupport",
+            "StreamingTV",
+            "StreamingMovies",
+        ]
+        service_columns = [
+            col for col in df.columns
+            if 'service' in col.lower() or any(col.startswith(f"{prefix}_") for prefix in service_prefixes)
+        ]
         if service_columns:
             df_agg['total_services'] = df[service_columns].sum(axis=1)
             df_agg['service_density'] = df_agg['total_services'] / (df_agg['tenure'] + 1)
@@ -114,8 +101,13 @@ class DataTransformationStorage:
         df_agg['tenure_stability'] = np.where(df_agg['tenure'] <= 12, 0,
                                     np.where(df_agg['tenure'] <= 36, 1,
                                     np.where(df_agg['tenure'] <= 60, 2, 3)))
-        if 'PaymentMethod' in df.columns:
-            df_agg['high_risk_payment'] = (df_agg['PaymentMethod'] == 2).astype(int)
+        payment_columns = self._find_prefixed_columns(df_agg, "PaymentMethod")
+        if payment_columns:
+            risky_columns = [column for column in payment_columns if "electronic check" in column.lower()]
+            if risky_columns:
+                df_agg['high_risk_payment'] = df_agg[risky_columns].max(axis=1).astype(int)
+            else:
+                df_agg['high_risk_payment'] = 0
         logger.info("Aggregated features created")
         return df_agg
 
@@ -144,8 +136,12 @@ class DataTransformationStorage:
         df_interact['tenure_total_interaction'] = df_interact['tenure'] * df_interact['TotalCharges']
         if 'total_services' in df.columns:
             df_interact['services_charges_interaction'] = df_interact['total_services'] * df_interact['MonthlyCharges']
-        if 'Contract' in df.columns and 'PaymentMethod' in df.columns:
-            df_interact['contract_payment_interaction'] = df_interact['Contract'] * df_interact['PaymentMethod']
+        contract_columns = self._find_prefixed_columns(df_interact, "Contract")
+        payment_columns = self._find_prefixed_columns(df_interact, "PaymentMethod")
+        if contract_columns and payment_columns:
+            df_interact['contract_payment_interaction'] = (
+                df_interact[contract_columns].sum(axis=1) * df_interact[payment_columns].sum(axis=1)
+            )
         logger.info("Interaction features created")
         return df_interact
 
@@ -156,6 +152,7 @@ class DataTransformationStorage:
         df['created_timestamp'] = df.get('created_timestamp', timestamp)
         df['updated_timestamp'] = timestamp
         df.to_sql(table_name, self.conn, if_exists='replace', index=False)
+        self._refresh_indexes(df, table_name)
         logger.info(f"Stored data in {table_name}")
         self.update_feature_metadata(df)
 

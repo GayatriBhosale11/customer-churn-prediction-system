@@ -1,158 +1,136 @@
-# Customer Churn Prediction - End-to-End ML Pipeline
+# Customer Churn Prediction System
 
-A comprehensive data management pipeline for customer churn prediction, implementing all stages from data ingestion to model deployment with automated versioning and monitoring.
+An end-to-end machine learning project for customer churn prediction. The project covers data ingestion, validation, preprocessing, feature engineering, feature storage, model training, DVC-based versioning, and Airflow orchestration.
 
-## Project Overview
+## What This Project Does
 
-This project implements a complete end-to-end ML pipeline for predicting customer churn in telecommunications, automating data collection, validation, feature engineering, model training, and deployment with comprehensive logging and versioning.
+- Downloads customer churn data from a CSV source and a Hugging Face dataset endpoint
+- Validates the latest raw files and generates a data quality report
+- Cleans and prepares the data for modeling
+- Builds transformed training datasets and stores feature metadata
+- Populates a lightweight feature store
+- Trains a churn prediction model with MLflow logging
+- Provides both local pipeline execution and Airflow-based orchestration
 
-## Dataset
+## Tech Stack
 
-**Primary Dataset**: IBM Telco Customer Churn Dataset
-- **Source**: Kaggle - https://www.kaggle.com/datasets/blastchar/telco-customer-churn
-- **Size**: 7,043 customers with 21 features
-- **Target**: Binary churn classification (Yes/No)
+- Python
+- Pandas, NumPy, scikit-learn
+- MLflow
+- SQLite
+- DVC
+- Apache Airflow
+- Matplotlib, Seaborn
 
-### Features:
-- **Demographics**: gender, SeniorCitizen, Partner, Dependents
-- **Services**: PhoneService, MultipleLines, InternetService, OnlineSecurity, OnlineBackup, DeviceProtection, TechSupport, StreamingTV, StreamingMovies
-- **Account**: Contract, PaperlessBilling, PaymentMethod
-- **Financial**: MonthlyCharges, TotalCharges
-- **Behavioral**: tenure (months with company)
+## Simplified Project Structure
 
-## Pipeline Architecture
-
-1. **Problem Formulation** - Business problem definition and objectives
-2. **Data Ingestion** - Fetch data from CSV + Hugging Face API
-3. **Raw Data Storage** - Organize and catalog raw data
-4. **Data Validation** - Validate data quality and integrity
-5. **Data Preparation** - Clean and preprocess data
-6. **Data Transformation** - Feature engineering and storage
-7. **Feature Store** - Manage engineered features
-8. **Data Versioning** - DVC-based version control
-9. **Model Training** - Train and evaluate ML models
-
-## Project Structure
-
-```
-churn-prediction-pipeline/
-├── config/                        # DVC and environment configuration
-├── scripts/                       # Setup and utility scripts
-├── src/                           # Source code
+```text
+Customer Churn Prediction System/
+├── airflow/
+│   ├── dags/
+│   │   └── churn_prediction_pipeline.py
+│   └── setup_airflow.py
+├── config/
+│   └── dvc/
+├── data/
+│   ├── eda/
+│   ├── feature_store/
+│   └── models/
+├── database/
+│   └── init.sql
+├── docs/
+├── logs/
+├── src/
+│   ├── build_model.py
 │   ├── data_ingestion.py
-│   ├── data_validation.py
 │   ├── data_preparation.py
 │   ├── data_transformation_storage.py
-│   ├── feature_store.py
+│   ├── data_validation.py
 │   ├── data_versioning.py
-│   ├── build_model.py
+│   ├── feature_store.py
+│   ├── pipeline_tasks.py
+│   ├── raw_data_storage.py
 │   └── utils/
-├── data/                          # DVC-tracked data storage
-│   ├── raw/         
-│   ├── cleaned/
-│   ├── processed/
-│   ├── feature_store/ 
-│   ├── eda/
-│   └── models/
-├── database/                      # SQLite schema
-├── docs/                          # Documentation
-├── logs/                          # Pipeline logs
-├── reports/                       # Generated reports
-├── Dockerfile
+│       ├── logger.py
+│       └── path_helpers.py
 ├── docker-compose.yml
-├── requirements.txt
-└── main_pipeline.py
+├── Dockerfile
+├── main_pipeline.py
+└── requirements.txt
 ```
 
-## Quick Start
+## Pipeline Flow
 
-### Option 1: Automated Setup (Recommended)
-```bash
-git clone <repository-url>
-cd churn-prediction-pipeline
-bash scripts/setup_project.sh
-nano .env
-python main_pipeline.py
-```
+1. Data ingestion
+2. Raw data cataloging
+3. Data validation
+4. Data preparation
+5. Data transformation
+6. Feature store update
+7. Data version tagging
+8. Model training
 
-### Option 2: Manual Setup
-```bash
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-cp config/env/.env.example .env && nano .env
-bash scripts/setup_dvc.sh
-python main_pipeline.py
-```
+## Setup
 
-### Option 3: Docker
-```bash
-cp config/env/.env.example .env && nano .env
-docker-compose up -d
-```
-
-## Pipeline Components
-
-| Step | Script | Output |
-|------|--------|--------|
-| Data Ingestion | `src/data_ingestion.py` | `data/raw/` |
-| Data Validation | `src/data_validation.py` | `reports/validation_reports/` |
-| Data Preparation | `src/data_preparation.py` | `data/cleaned/` |
-| Data Transformation | `src/data_transformation_storage.py` | `data/processed/training_sets/` |
-| Feature Store | `src/feature_store.py` | `data/feature_store/` |
-| Data Versioning | `src/data_versioning.py` | DVC `.dvc` files |
-| Model Training | `src/build_model.py` | `src/models/` |
-
-### DVC Data Versioning Features:
-- Git-like versioning with automatic version creation per pipeline step
-- Reproducibility — exact data states can be recreated
-- Optional remote/cloud storage integration
-
-## Expected Performance
-
-| Metric | Target |
-|--------|--------|
-| Accuracy | > 85% |
-| Precision | > 80% |
-| Recall | > 75% |
-| F1-Score | > 0.80 |
-| AUC-ROC | > 0.85 |
-
-**Business Impact**: 5% quarterly churn reduction, reduced acquisition costs, maintained customer lifetime value.
-
-## Configuration
+### 1. Create a virtual environment
 
 ```bash
-export PYTHONPATH=$PYTHONPATH:$(pwd)
-export LOG_LEVEL=INFO
-export AWS_ACCESS_KEY_ID=your-access-key
-export AWS_SECRET_ACCESS_KEY=your-secret-key
-export S3_BUCKET_NAME=your-bucket-name
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
-- **Database**: SQLite (local) / PostgreSQL (production)
-- **Feature Store**: CSV-based (extensible to Redis/PostgreSQL)
+### 2. Install dependencies
 
-## Troubleshooting
+```bash
+pip3 install -r requirements.txt
+```
 
-| Issue | Fix |
-|-------|-----|
-| Import Errors | `pip install -r requirements.txt` + set `PYTHONPATH` |
-| Data File Not Found | Verify `data/raw/customer_data.csv` exists |
-| Permission Errors | `chmod -R 755 data/ logs/ reports/` |
-| Memory Issues | Subsample with `head -1000` for testing |
+### 3. Run the full pipeline
 
-Enable debug logging: `export LOG_LEVEL=DEBUG`
+```bash
+python3 main_pipeline.py
+```
 
-## Documentation
+## Run Individual Pipeline Steps
 
-- `problem_formulation.md` — Business problem definition
-- `docs/DVC_Data_Versioning_Guide.md` — DVC guide
-- `docs/FEATURE_STORE_README.md` — Feature store details
-- `docs/TRANSFORMATION_STORAGE.md` — Transformation details
+```bash
+python3 src/pipeline_tasks.py --step data_ingestion
+python3 src/pipeline_tasks.py --step data_validation
+python3 src/pipeline_tasks.py --step data_preparation
+python3 src/pipeline_tasks.py --step data_transformation
+python3 src/pipeline_tasks.py --step feature_store
+python3 src/pipeline_tasks.py --step model_building
+```
 
-## License
+To run everything through the shared task runner:
 
-Educational purposes only. Dataset license follows IBM terms.
+```bash
+python3 src/pipeline_tasks.py --step full
+```
 
-## References
-- [DVC Documentation](https://dvc.org/doc) · [scikit-learn](https://scikit-learn.org/stable/) · [Pandas](https://pandas.pydata.org/docs/) · [SQLite](https://www.sqlite.org/docs.html)
+## Main Outputs
+
+- Raw datasets in `data/raw/`
+- Validation reports in `reports/`
+- Cleaned and transformed datasets in `data/processed/`
+- Feature store files in `data/feature_store/`
+- Trained models in `data/models/`
+- Logs in `logs/`
+
+## Airflow
+
+The DAG file is available at `airflow/dags/churn_prediction_pipeline.py`.
+
+It now uses the shared pipeline task runner so local execution and Airflow execution follow the same step definitions.
+
+## Notes
+
+- The project is designed for learning and demonstration of an end-to-end ML pipeline.
+- DVC support is included for data versioning workflows.
+- MLflow is used for experiment tracking during model training.
+
+## Author
+
+**GAYATRI BHOSALE**  
+GitHub: [https://github.com/GayatriBhosale11](https://github.com/GayatriBhosale11)
+Updated on Feb 10

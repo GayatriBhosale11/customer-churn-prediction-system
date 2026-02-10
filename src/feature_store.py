@@ -6,11 +6,11 @@ A lightweight feature store implementation that works with CSV data.
 
 import pandas as pd
 import os
-import glob
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 from utils.logger import get_logger, PIPELINE_NAMES
+from utils.path_helpers import ensure_directories, find_latest_file
 
 # Get logger for this pipeline
 logger = get_logger(PIPELINE_NAMES['FEATURE_STORE'])
@@ -18,40 +18,36 @@ logger = get_logger(PIPELINE_NAMES['FEATURE_STORE'])
 class SimpleChurnFeatureStore:
     """Simple feature store for managing churn prediction features."""
     
-    def __init__(self, store_path="data/feature_store"):
+    def __init__(self, store_path="data/feature_store", auto_populate: bool = False):
         """Initialize the simple feature store."""
         self.store_path = store_path
-        os.makedirs(store_path, exist_ok=True)
-        os.makedirs(os.path.join(store_path, "offline_store"), exist_ok=True)
+        ensure_directories(store_path, os.path.join(store_path, "offline_store"))
         
         logger.info("Simple feature store initialized at %s", store_path)
-        
-        # Auto-populate from latest data
-        self.auto_populate_from_latest_data()
+        if auto_populate:
+            self.auto_populate_from_latest_data()
 
     def find_latest_training_data(self):
         """Find the latest training data CSV file from the training_sets directory."""
-        training_sets_dir = "data/processed/training_sets"
-        
-        if not os.path.exists(training_sets_dir):
-            logger.warning("Training sets directory not found: %s", training_sets_dir)
-            return None
-        
-        try:
-            # Find all CSV files in training_sets directory
-            csv_files = glob.glob(os.path.join(training_sets_dir, "*.csv"))
-            if not csv_files:
-                logger.warning("No CSV files found in %s", training_sets_dir)
-                return None
-            
-            # Get the latest file by modification time
-            latest_file = max(csv_files, key=os.path.getmtime)
+        latest_file = find_latest_file(
+            [
+                "data/processed/training_sets/*.csv",
+                "data/processed/cleaned_data*.csv",
+            ]
+        )
+        if latest_file:
             logger.info("Found latest training data: %s", latest_file)
             return latest_file
-        
-        except Exception as e:
-            logger.error("Error finding latest training data: %s", str(e))
-            return None
+
+        logger.warning("No training data files found in processed outputs")
+        return None
+
+    def _get_entity_column(self, df: pd.DataFrame) -> Optional[str]:
+        """Resolve the column used as the entity identifier."""
+        for candidate in ("customer_id", "customerID"):
+            if candidate in df.columns:
+                return candidate
+        return df.columns[0] if not df.empty else None
 
     def populate_from_dataframe(self, df: pd.DataFrame, entity_id_col: str = 'customerID'):
         """Populate feature store from a DataFrame."""
@@ -89,9 +85,7 @@ class SimpleChurnFeatureStore:
                 logger.info("Loaded data with shape: %s", df.shape)
                 
                 # Determine entity ID column
-                entity_id_col = 'customer_id' if 'customer_id' in df.columns else 'customerID'
-                if entity_id_col not in df.columns:
-                    entity_id_col = df.columns[0]  # Use first column as entity ID
+                entity_id_col = self._get_entity_column(df)
                 
                 self.populate_from_dataframe(df, entity_id_col)
                 return f"Feature store populated with {len(df)} records from {latest_file}"
@@ -160,13 +154,19 @@ class SimpleChurnFeatureStore:
             csv_path = os.path.join(self.store_path, "churn_features.csv")
             if os.path.exists(csv_path):
                 df = pd.read_csv(csv_path)
-                # Find the row with matching customer_id
-                customer_row = df[df['customer_id'] == entity_id]
+                entity_column = self._get_entity_column(df)
+                if not entity_column:
+                    return {}
+                customer_row = df[df[entity_column].astype(str) == str(entity_id)]
                 if not customer_row.empty:
                     if feature_names:
                         result = {col: customer_row[col].iloc[0] for col in feature_names if col in customer_row.columns}
                     else:
-                        result = {col: customer_row[col].iloc[0] for col in customer_row.columns if col not in ['customerID', 'created_timestamp', 'updated_timestamp']}
+                        result = {
+                            col: customer_row[col].iloc[0]
+                            for col in customer_row.columns
+                            if col not in [entity_column, 'created_timestamp', 'updated_timestamp']
+                        }
                     logger.debug("Retrieved features for entity %s: %s", entity_id, result)
                     return result
                 else:
@@ -276,7 +276,7 @@ if __name__ == "__main__":
         print("Simple Churn Feature Store Test")
         print("=" * 60)
         
-        feature_store = SimpleChurnFeatureStore()
+        feature_store = SimpleChurnFeatureStore(auto_populate=True)
         
         # Auto-populate from latest data
         result = feature_store.auto_populate_from_latest_data()

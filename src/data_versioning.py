@@ -16,11 +16,23 @@ from utils.logger import get_logger, PIPELINE_NAMES
 logger = get_logger(PIPELINE_NAMES['DATA_VERSIONING'])
 
 
+def is_git_repository() -> bool:
+    """Return True when the current working directory is inside a Git repository."""
+    result = subprocess.run(
+        ['git', 'rev-parse', '--is-inside-work-tree'],
+        capture_output=True,
+        text=True,
+        check=False
+    )
+    return result.returncode == 0 and result.stdout.strip() == 'true'
+
+
 class DVCVersioning:
     """DVC-based data versioning system for churn prediction pipeline."""
 
     def __init__(self):
         """Initialize DVC versioning system."""
+        self.git_available = is_git_repository()
         self.setup_dvc()
         logger.info("DVC versioning system initialized")
 
@@ -40,7 +52,10 @@ class DVCVersioning:
 
             # Initialize DVC if not already done
             if not os.path.exists('.dvc'):
-                subprocess.run(['dvc', 'init'], check=True)
+                init_command = ['dvc', 'init']
+                if not self.git_available:
+                    init_command.append('--no-scm')
+                subprocess.run(init_command, check=True)
                 logger.info("DVC initialized")
 
             # Configure DVC cache
@@ -69,7 +84,7 @@ class DVCVersioning:
 
             # Add .dvc file to git
             dvc_file = f"{data_path}.dvc"
-            if os.path.exists(dvc_file):
+            if self.git_available and os.path.exists(dvc_file):
                 subprocess.run(['git', 'add', dvc_file], check=True)
                 logger.info("Added %s to git", dvc_file)
 
@@ -82,8 +97,20 @@ class DVCVersioning:
     def create_version(self, message: str, tag: Optional[str] = None) -> bool:
         """Create a new version with current data state."""
         try:
+            if not self.git_available:
+                logger.warning("Skipping Git version creation because this project is not a Git repository")
+                return False
+
             # Add all .dvc files to git
-            subprocess.run(['git', 'add', '*.dvc'], check=True)
+            dvc_files = []
+            for root, _, files in os.walk('.'):
+                dvc_files.extend(
+                    os.path.join(root, file_name)
+                    for file_name in files
+                    if file_name.endswith('.dvc')
+                )
+            if dvc_files:
+                subprocess.run(['git', 'add', *dvc_files], check=True)
             subprocess.run(['git', 'add', '.dvcignore'], check=False)
 
             # Commit changes
@@ -107,6 +134,10 @@ class DVCVersioning:
     def checkout_version(self, version: str) -> bool:
         """Checkout a specific version of data."""
         try:
+            if not self.git_available:
+                logger.warning("Cannot checkout versions because this project is not a Git repository")
+                return False
+
             # Checkout git commit or tag
             subprocess.run(['git', 'checkout', version], check=True)
 
@@ -123,6 +154,10 @@ class DVCVersioning:
     def list_versions(self) -> List[Dict]:
         """List all available data versions."""
         try:
+            if not self.git_available:
+                logger.warning("No Git history available to list data versions")
+                return []
+
             # Get git log with tags
             result = subprocess.run([
                 'git', 'log', '--oneline', '--decorate', '--grep=Data version'
@@ -300,15 +335,41 @@ def version_pipeline_step(step_name: str, description: str):
     tag = f"{step_name.lower().replace(' ', '_')}_v{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
     try:
+        if not versioning.git_available:
+            logger.info(
+                "Skipping Git commit for step '%s' because this project is not a Git repository",
+                step_name
+            )
+            return tag
+
         # Add any changes to git (but not .dvc files for pipeline outputs)
-        subprocess.run(['git', 'add', 'logs/', 'reports/'], check=False)
+        for candidate in ('logs', 'reports'):
+            if os.path.exists(candidate):
+                subprocess.run(['git', 'add', candidate], check=False)
+
+        status_result = subprocess.run(
+            ['git', 'status', '--porcelain'],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if not status_result.stdout.strip():
+            logger.info("No tracked changes detected for step: %s", step_name)
+            return tag
         
         # Commit changes
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         commit_message = f"Pipeline step {timestamp}: {step_name} - {description}"
-        subprocess.run(['git', 'commit', '-m', commit_message], check=False)
-        
-        logger.info("Created version for step: %s", step_name)
+        commit_result = subprocess.run(
+            ['git', 'commit', '-m', commit_message],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if commit_result.returncode == 0:
+            logger.info("Created version for step: %s", step_name)
+        else:
+            logger.info("Skipped commit for step %s: %s", step_name, commit_result.stdout.strip() or commit_result.stderr.strip())
     except Exception as e:
         logger.warning("Could not create git commit for step %s: %s", step_name, str(e))
     
